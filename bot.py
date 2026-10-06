@@ -1,15 +1,29 @@
 # Стандартная библиотека
 import os
+import sys
 import datetime
 
 # Сторонние пакеты
 import telegram
 import psycopg2
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # Локальные модули
 from secrets import API_TOKEN, DB_HOST, DB_NAME, DB_USER, DB_PASSWORD
 
+# --- Настройка Django ---
+sys.path.append(
+    "/Users/shitikova.yuliya/PycharmProjects/Python_TelegramBot_Shitikova/admin_panel"
+)
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin_panel.settings")
+
+import django
+django.setup()
+
+from events.models import BotStatistics, Meeting, TelegramUser
+
+# --- Подключение к БД ---
 conn = psycopg2.connect(
     host=DB_HOST,
     database=DB_NAME,
@@ -45,11 +59,8 @@ class Calendar:
         cursor.close()
         if row:
             return {
-                "id": row[0],
-                "name": row[1],
-                "date": row[2],
-                "time": row[3],
-                "details": row[4]
+                "id": row[0], "name": row[1], "date": row[2],
+                "time": row[3], "details": row[4],
             }
         return None
 
@@ -101,7 +112,7 @@ class Calendar:
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT id, name, date, time FROM events "
-            "WHERE telegram_id = %s ORDER BY id;",
+            "WHERE telegram_id = %s ORDER BY date, time;",
             (telegram_id,)
         )
         rows = cursor.fetchall()
@@ -112,35 +123,40 @@ class Calendar:
         ]
 
 
-# Глобальный объект календаря
 calendar = Calendar(conn)
 
 
-# --- Вспомогательные функции ---
+# --- Управление пользователями через Django ORM ---
 
 def is_registered(telegram_id):
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT telegram_id FROM users WHERE telegram_id = %s;",
-        (telegram_id,)
+    return TelegramUser.objects.filter(telegram_id=telegram_id).exists()
+
+
+def register_user(telegram_id, username, first_name=""):
+    user, created = TelegramUser.objects.get_or_create(
+        telegram_id=telegram_id,
+        defaults={
+            "username": username or "",
+            "first_name": first_name or "",
+        }
     )
-    result = cursor.fetchone()
-    cursor.close()
-    return result is not None
+    if not created:
+        if username:
+            user.username = username
+        if first_name:
+            user.first_name = first_name
+        user.save()
+    return user
 
 
-def register_user(telegram_id, username):
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO users (telegram_id, username) "
-        "VALUES (%s, %s) ON CONFLICT (telegram_id) DO NOTHING;",
-        (telegram_id, username)
-    )
-    conn.commit()
-    cursor.close()
+def get_user(telegram_id):
+    try:
+        return TelegramUser.objects.get(telegram_id=telegram_id)
+    except TelegramUser.DoesNotExist:
+        return None
 
 
-# --- Обработчики ---
+# --- Обработчики событий ---
 
 def start_handler(update, context):
     user = update.effective_user
@@ -149,11 +165,16 @@ def start_handler(update, context):
             f"Привет, {user.first_name}! Вы уже зарегистрированы.\n"
             f"Доступные команды:\n"
             f"/register — повторная регистрация\n"
+            f"/login — вход в личный кабинет\n"
+            f"/calendar — мой календарь\n"
             f"/create_event <название> — создать событие\n"
             f"/read_event <id> — посмотреть событие\n"
             f"/edit_event <id> <новое название> — редактировать\n"
             f"/delete_event <id> — удалить событие\n"
-            f"/all_events — все ваши события"
+            f"/all_events — все ваши события\n"
+            f"/my_stats — моя статистика\n"
+            f"/invite_meeting — пригласить на встречу\n"
+            f"/my_meetings — мои встречи"
         )
     else:
         update.message.reply_text(
@@ -164,12 +185,80 @@ def start_handler(update, context):
 
 def register_handler(update, context):
     user = update.effective_user
-    username = user.username or user.first_name
-    register_user(user.id, username)
+    username = user.username or user.first_name or str(user.id)
+    register_user(user.id, username, user.first_name or "")
     update.message.reply_text(
         f"Вы успешно зарегистрированы, {username}!\n"
-        f"Теперь вы можете создавать события: /create_event <название>"
+        f"Теперь вам доступны:\n"
+        f"/calendar — ваш календарь\n"
+        f"/create_event <название> — создать событие\n"
+        f"/my_stats — ваша статистика"
     )
+
+
+def login_handler(update, context):
+    user = update.effective_user
+    tg_user = get_user(user.id)
+    if tg_user:
+        update.message.reply_text(
+            f"Вы вошли в личный кабинет.\n"
+            f"ID: {tg_user.telegram_id}\n"
+            f"Имя: {tg_user.username or tg_user.first_name}\n"
+            f"Событий создано: {tg_user.events_created}\n"
+            f"Событий отредактировано: {tg_user.events_edited}\n"
+            f"Событий удалено: {tg_user.events_cancelled}\n\n"
+            f"Команды:\n"
+            f"/calendar — мой календарь\n"
+            f"/my_stats — моя статистика"
+        )
+    else:
+        update.message.reply_text(
+            "Вы ещё не зарегистрированы. Используйте /register."
+        )
+
+
+def calendar_handler(update, context):
+    user = update.effective_user
+    if not is_registered(user.id):
+        update.message.reply_text("Сначала зарегистрируйтесь: /register")
+        return
+
+    events = calendar.get_all_events(user.id)
+    if not events:
+        update.message.reply_text("Ваш календарь пуст. Создайте событие: /create_event <название>")
+        return
+
+    grouped = {}
+    for e in events:
+        date_str = str(e["date"])
+        if date_str not in grouped:
+            grouped[date_str] = []
+        grouped[date_str].append(e)
+
+    text = "📅 Ваш календарь:\n\n"
+    for date_str in sorted(grouped.keys()):
+        text += f"📌 {date_str}\n"
+        for e in grouped[date_str]:
+            text += f"   ⏰ {e['time']} — {e['name']} (№{e['id']})\n"
+        text += "\n"
+
+    update.message.reply_text(text)
+
+
+def my_stats_handler(update, context):
+    user = update.effective_user
+    tg_user = get_user(user.id)
+    if not tg_user:
+        update.message.reply_text("Сначала зарегистрируйтесь: /register")
+        return
+
+    text = (
+        f"📊 Ваша статистика:\n\n"
+        f"Событий создано: {tg_user.events_created}\n"
+        f"Событий отредактировано: {tg_user.events_edited}\n"
+        f"Событий удалено: {tg_user.events_cancelled}\n"
+    )
+    update.message.reply_text(text)
 
 
 def event_create_handler(update, context):
@@ -178,14 +267,15 @@ def event_create_handler(update, context):
         update.message.reply_text("Сначала зарегистрируйтесь: /register")
         return
 
-    # Отслеживаем состояние пользователя
-    context.user_data["state"] = "creating_event"
-
     try:
-        event_name = update.message.text[14:]
-        if not event_name.strip():
+        args = context.args
+        if not args:
             update.message.reply_text("Укажите название события: /create_event <название>")
-            context.user_data["state"] = None
+            return
+
+        event_name = " ".join(args)
+        if not event_name.strip():
+            update.message.reply_text("Название не может быть пустым.")
             return
 
         event_date = "2026-10-06"
@@ -193,13 +283,15 @@ def event_create_handler(update, context):
         event_details = "Описание события"
 
         event_id = calendar.create_event(user.id, event_name, event_date, event_time, event_details)
-        update.message.reply_text(
-            f"Событие «{event_name}» создано и имеет номер {event_id}."
-        )
-        context.user_data["state"] = None
-    except Exception:
-        update.message.reply_text("При создании события произошла ошибка.")
-        context.user_data["state"] = None
+
+        tg_user = get_user(user.id)
+        if tg_user:
+            tg_user.events_created += 1
+            tg_user.save()
+
+        update.message.reply_text(f"Событие «{event_name}» создано и имеет номер {event_id}.")
+    except Exception as e:
+        update.message.reply_text(f"При создании события произошла ошибка: {e}")
 
 
 def event_read_handler(update, context):
@@ -208,9 +300,10 @@ def event_read_handler(update, context):
         update.message.reply_text("Сначала зарегистрируйтесь: /register")
         return
 
-    context.user_data["state"] = "reading_event"
-
     try:
+        if len(context.args) == 0:
+            update.message.reply_text("Используйте: /read_event <id>")
+            return
         event_id = int(context.args[0])
         event = calendar.read_event(user.id, event_id)
         if event:
@@ -224,12 +317,10 @@ def event_read_handler(update, context):
         else:
             text = f"Событие с номером {event_id} не найдено."
         update.message.reply_text(text)
-    except Exception:
-        update.message.reply_text(
-            "При чтении события произошла ошибка. Используйте: /read_event <id>"
-        )
-    finally:
-        context.user_data["state"] = None
+    except ValueError:
+        update.message.reply_text("ID события должно быть числом. Используйте: /read_event <id>")
+    except Exception as e:
+        update.message.reply_text(f"При чтении события произошла ошибка: {e}")
 
 
 def event_edit_handler(update, context):
@@ -238,24 +329,28 @@ def event_edit_handler(update, context):
         update.message.reply_text("Сначала зарегистрируйтесь: /register")
         return
 
-    context.user_data["state"] = "editing_event"
-
     try:
+        if len(context.args) < 1:
+            update.message.reply_text("Используйте: /edit_event <id> <новое название>")
+            return
+
         event_id = int(context.args[0])
         event_name = " ".join(context.args[1:]) if len(context.args) > 1 else None
 
         success = calendar.edit_event(user.id, event_id, event_name=event_name)
         if success:
+            tg_user = get_user(user.id)
+            if tg_user:
+                tg_user.events_edited += 1
+                tg_user.save()
             text = f"Событие {event_id} отредактировано."
         else:
-            text = f"Событие с номером {event_id} не найдено."
+            text = f"Событие с номером {event_id} не найдено или не принадлежит вам."
         update.message.reply_text(text)
-    except Exception:
-        update.message.reply_text(
-            "При редактировании произошла ошибка. Используйте: /edit_event <id> <новое название>"
-        )
-    finally:
-        context.user_data["state"] = None
+    except ValueError:
+        update.message.reply_text("ID события должно быть числом.")
+    except Exception as e:
+        update.message.reply_text(f"При редактировании произошла ошибка: {e}")
 
 
 def event_delete_handler(update, context):
@@ -264,22 +359,25 @@ def event_delete_handler(update, context):
         update.message.reply_text("Сначала зарегистрируйтесь: /register")
         return
 
-    context.user_data["state"] = "deleting_event"
-
     try:
+        if len(context.args) == 0:
+            update.message.reply_text("Используйте: /delete_event <id>")
+            return
         event_id = int(context.args[0])
         success = calendar.delete_event(user.id, event_id)
         if success:
+            tg_user = get_user(user.id)
+            if tg_user:
+                tg_user.events_cancelled += 1
+                tg_user.save()
             text = f"Событие {event_id} удалено."
         else:
-            text = f"Событие с номером {event_id} не найдено."
+            text = f"Событие с номером {event_id} не найдено или не принадлежит вам."
         update.message.reply_text(text)
-    except Exception:
-        update.message.reply_text(
-            "При удалении произошла ошибка. Используйте: /delete_event <id>"
-        )
-    finally:
-        context.user_data["state"] = None
+    except ValueError:
+        update.message.reply_text("ID события должно быть числом.")
+    except Exception as e:
+        update.message.reply_text(f"При удалении произошла ошибка: {e}")
 
 
 def event_show_all_handler(update, context):
@@ -288,22 +386,204 @@ def event_show_all_handler(update, context):
         update.message.reply_text("Сначала зарегистрируйтесь: /register")
         return
 
-    context.user_data["state"] = "viewing_events"
-
     try:
         events = calendar.get_all_events(user.id)
         if events:
-            lines = []
-            for e in events:
-                lines.append(f"№{e['id']}: {e['name']} — {e['date']} {e['time']}")
+            lines = [f"№{e['id']}: {e['name']} — {e['date']} {e['time']}" for e in events]
             text = "Ваши события:\n" + "\n".join(lines)
         else:
             text = "У вас пока нет событий."
         update.message.reply_text(text)
-    except Exception:
-        update.message.reply_text("При получении списка событий произошла ошибка.")
-    finally:
-        context.user_data["state"] = None
+    except Exception as e:
+        update.message.reply_text(f"При получении списка событий произошла ошибка: {e}")
+
+
+# --- Логика встреч ---
+
+meeting_context = {}
+
+
+def is_user_free(telegram_id, meeting_date, meeting_time):
+    existing = Meeting.objects.filter(
+        participant_id=telegram_id,
+        date=meeting_date,
+        time=meeting_time,
+        status__in=['pending', 'confirmed']
+    )
+    return not existing.exists()
+
+
+def invite_meeting(update, context):
+    user = update.effective_user
+    meeting_context[user.id] = {"step": "title"}
+    update.message.reply_text("Создание встречи.\nВведите название встречи:")
+
+
+def meeting_message_handler(update, context):
+    user = update.effective_user
+    if user.id not in meeting_context:
+        return False
+
+    ctx = meeting_context[user.id]
+    text = update.message.text
+
+    if ctx["step"] == "title":
+        ctx["title"] = text
+        ctx["step"] = "participant"
+        update.message.reply_text("Введите Telegram ID участника (число):")
+        return True
+
+    if ctx["step"] == "participant":
+        try:
+            participant_id = int(text)
+        except ValueError:
+            update.message.reply_text("Нужно ввести число. Попробуйте снова:")
+            return True
+        ctx["participant_id"] = participant_id
+        ctx["step"] = "date"
+        update.message.reply_text("Введите дату встречи (ГГГГ-ММ-ДД):")
+        return True
+
+    if ctx["step"] == "date":
+        try:
+            meeting_date = datetime.datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            update.message.reply_text("Неверный формат. Пример: 2025-01-15")
+            return True
+        ctx["date"] = meeting_date
+        ctx["step"] = "time"
+        update.message.reply_text("Введите время встречи (ЧЧ:ММ):")
+        return True
+
+    if ctx["step"] == "time":
+        try:
+            meeting_time = datetime.datetime.strptime(text, "%H:%M").time()
+        except ValueError:
+            update.message.reply_text("Неверный формат. Пример: 14:30")
+            return True
+        ctx["time"] = meeting_time
+
+        if not is_user_free(ctx["participant_id"], ctx["date"], ctx["time"]):
+            update.message.reply_text("Участник занят в это время. Выберите другое время.")
+            ctx["step"] = "date"
+            update.message.reply_text("Введите новую дату (ГГГГ-ММ-ДД):")
+            return True
+
+        organizer_name = user.username or user.first_name or str(user.id)
+        meeting = Meeting.objects.create(
+            title=ctx["title"],
+            date=ctx["date"],
+            time=ctx["time"],
+            organizer_id=user.id,
+            organizer_name=organizer_name,
+            participant_id=ctx["participant_id"],
+            participant_name="",
+            status='pending'
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("Подтвердить", callback_data=f"confirm_{meeting.id}"),
+                InlineKeyboardButton("Отклонить", callback_data=f"decline_{meeting.id}"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        try:
+            context.bot.send_message(
+                chat_id=ctx["participant_id"],
+                text=(
+                    f"Вас приглашают на встречу!\n\n"
+                    f"Название: {ctx['title']}\n"
+                    f"Организатор: {organizer_name}\n"
+                    f"Дата: {ctx['date']}\n"
+                    f"Время: {ctx['time']}\n\n"
+                    f"Подтверждаете или отклоняете?"
+                ),
+                reply_markup=reply_markup
+            )
+            update.message.reply_text(
+                f"Приглашение отправлено пользователю {ctx['participant_id']}."
+            )
+        except Exception as e:
+            update.message.reply_text(
+                f"Не удалось отправить приглашение. "
+                f"Возможно, пользователь не запускал бота. Ошибка: {e}"
+            )
+
+        del meeting_context[user.id]
+        return True
+
+    return False
+
+
+def meeting_callback_handler(update, context):
+    query = update.callback_query
+    query.answer()
+
+    data = query.data
+    action, meeting_id = data.split("_")
+    meeting_id = int(meeting_id)
+
+    try:
+        meeting = Meeting.objects.get(id=meeting_id)
+    except Meeting.DoesNotExist:
+        query.edit_message_text("Встреча не найдена.")
+        return
+
+    if action == "confirm":
+        meeting.status = 'confirmed'
+        meeting.save()
+        query.edit_message_text("Вы подтвердили встречу!")
+        try:
+            context.bot.send_message(
+                chat_id=meeting.organizer_id,
+                text=f"Участник подтвердил встречу «{meeting.title}» "
+                     f"на {meeting.date} в {meeting.time}."
+            )
+        except Exception:
+            pass
+
+    elif action == "decline":
+        meeting.status = 'cancelled'
+        meeting.save()
+        query.edit_message_text("Вы отклонили встречу.")
+        try:
+            context.bot.send_message(
+                chat_id=meeting.organizer_id,
+                text=f"Участник отклонил встречу «{meeting.title}» "
+                     f"на {meeting.date} в {meeting.time}."
+            )
+        except Exception:
+            pass
+
+
+def my_meetings(update, context):
+    user = update.effective_user
+    meetings = Meeting.objects.filter(
+        participant_id=user.id,
+        status__in=['pending', 'confirmed']
+    ).order_by('date', 'time')
+
+    if not meetings:
+        update.message.reply_text("У вас нет запланированных встреч.")
+        return
+
+    text = "Ваши встречи:\n\n"
+    for m in meetings:
+        status_emoji = {"pending": "\u23f3", "confirmed": "\u2705", "cancelled": "\u274c"}
+        text += (
+            f"{status_emoji.get(m.status, '•')} {m.title}\n"
+            f"   Дата: {m.date}  Время: {m.time}\n"
+            f"   Организатор: {m.organizer_name}\n"
+            f"   Статус: {m.get_status_display()}\n\n"
+        )
+    update.message.reply_text(text)
+
+
+def text_handler(update, context):
+    if meeting_message_handler(update, context):
+        return
 
 
 # --- Инициализация и регистрация ---
@@ -314,11 +594,20 @@ def main():
 
     dispatcher.add_handler(CommandHandler('start', start_handler))
     dispatcher.add_handler(CommandHandler('register', register_handler))
+    dispatcher.add_handler(CommandHandler('login', login_handler))
+    dispatcher.add_handler(CommandHandler('calendar', calendar_handler))
+    dispatcher.add_handler(CommandHandler('my_stats', my_stats_handler))
     dispatcher.add_handler(CommandHandler('create_event', event_create_handler))
     dispatcher.add_handler(CommandHandler('read_event', event_read_handler))
     dispatcher.add_handler(CommandHandler('edit_event', event_edit_handler))
     dispatcher.add_handler(CommandHandler('delete_event', event_delete_handler))
     dispatcher.add_handler(CommandHandler('all_events', event_show_all_handler))
+
+    dispatcher.add_handler(CommandHandler('invite_meeting', invite_meeting))
+    dispatcher.add_handler(CommandHandler('my_meetings', my_meetings))
+    dispatcher.add_handler(CallbackQueryHandler(meeting_callback_handler, pattern=r"^(confirm|decline)_"))
+
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
 
     print("Бот запущен и ждёт команд...")
     updater.start_polling()
