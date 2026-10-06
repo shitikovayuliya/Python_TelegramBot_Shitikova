@@ -1,1 +1,5 @@
 secrets.py
+.idea/
+bot.py.backup
+__pycache__/
+*.pyc
