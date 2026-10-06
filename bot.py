@@ -21,7 +21,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin_panel.settings")
 import django
 django.setup()
 
-from events.models import BotStatistics, Meeting, TelegramUser
+from events.models import BotStatistics, Meeting, TelegramUser, Event
 
 # --- Подключение к БД ---
 conn = psycopg2.connect(
@@ -51,7 +51,7 @@ class Calendar:
     def read_event(self, telegram_id, event_id):
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT id, name, date, time, details FROM events "
+            "SELECT id, name, date, time, details, is_public FROM events "
             "WHERE id = %s AND telegram_id = %s;",
             (event_id, telegram_id)
         )
@@ -60,7 +60,7 @@ class Calendar:
         if row:
             return {
                 "id": row[0], "name": row[1], "date": row[2],
-                "time": row[3], "details": row[4],
+                "time": row[3], "details": row[4], "is_public": row[5],
             }
         return None
 
@@ -121,6 +121,41 @@ class Calendar:
             {"id": row[0], "name": row[1], "date": row[2], "time": row[3]}
             for row in rows
         ]
+    def toggle_public(self, telegram_id, event_id):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT is_public FROM events WHERE id = %s AND telegram_id = %s;",
+            (event_id, telegram_id)
+        )
+        row = cursor.fetchone()
+        if not row:
+            cursor.close()
+            return None
+        new_status = not row[0]
+        cursor.execute(
+            "UPDATE events SET is_public = %s WHERE id = %s AND telegram_id = %s;",
+            (new_status, event_id, telegram_id)
+        )
+        self.conn.commit()
+        cursor.close()
+        return new_status
+
+    def get_public_events(self, telegram_id, limit=20):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, name, date, time, telegram_id FROM events "
+            "WHERE is_public = TRUE AND telegram_id != %s "
+            "ORDER BY date, time LIMIT %s;",
+            (telegram_id, limit)
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        return [
+            {"id": row[0], "name": row[1], "date": row[2],
+             "time": row[3], "owner_id": row[4]}
+            for row in rows
+        ]
+
 
 
 calendar = Calendar(conn)
@@ -174,7 +209,10 @@ def start_handler(update, context):
             f"/all_events — все ваши события\n"
             f"/my_stats — моя статистика\n"
             f"/invite_meeting — пригласить на встречу\n"
-            f"/my_meetings — мои встречи"
+            f"/my_meetings — мои встречи\n"
+            f"/share_event <id> — сделать событие публичным/приватным\n"
+            f"/public_events — посмотреть публичные события других пользователей\n"
+
         )
     else:
         update.message.reply_text(
@@ -223,11 +261,8 @@ def calendar_handler(update, context):
         update.message.reply_text("Сначала зарегистрируйтесь: /register")
         return
 
+    # --- Мои события ---
     events = calendar.get_all_events(user.id)
-    if not events:
-        update.message.reply_text("Ваш календарь пуст. Создайте событие: /create_event <название>")
-        return
-
     grouped = {}
     for e in events:
         date_str = str(e["date"])
@@ -235,12 +270,38 @@ def calendar_handler(update, context):
             grouped[date_str] = []
         grouped[date_str].append(e)
 
-    text = "📅 Ваш календарь:\n\n"
-    for date_str in sorted(grouped.keys()):
-        text += f"📌 {date_str}\n"
-        for e in grouped[date_str]:
-            text += f"   ⏰ {e['time']} — {e['name']} (№{e['id']})\n"
-        text += "\n"
+    if grouped:
+        text = "📅 Ваш календарь:\n\n"
+        for date_str in sorted(grouped.keys()):
+            text += f"📌 {date_str}\n"
+            for e in grouped[date_str]:
+                text += f"   ⏰ {e['time']} — {e['name']} (№{e['id']})\n"
+            text += "\n"
+    else:
+        text = "📅 Ваш календарь пуст. Создайте событие: /create_event <название>\n\n"
+
+    # --- Общие события (публичные от других пользователей) ---
+    public_events = calendar.get_public_events(user.id)
+    if public_events:
+        text += "🌍 Общие события:\n\n"
+        public_grouped = {}
+        for e in public_events:
+            date_str = str(e["date"])
+            if date_str not in public_grouped:
+                public_grouped[date_str] = []
+            public_grouped[date_str].append(e)
+
+        for date_str in sorted(public_grouped.keys()):
+            text += f"📌 {date_str}\n"
+            for e in public_grouped[date_str]:
+                # Получаем имя автора
+                try:
+                    owner = TelegramUser.objects.get(telegram_id=e["owner_id"])
+                    owner_name = owner.username or owner.first_name or "Аноним"
+                except TelegramUser.DoesNotExist:
+                    owner_name = "Аноним"
+                text += f"   ⏰ {e['time']} — {e['name']} (от {owner_name})\n"
+            text += "\n"
 
     update.message.reply_text(text)
 
@@ -307,20 +368,30 @@ def event_read_handler(update, context):
         event_id = int(context.args[0])
         event = calendar.read_event(user.id, event_id)
         if event:
+            public_status = "да" if event.get("is_public") else "нет"
             text = (
                 f"Событие №{event['id']}\n"
                 f"Название: {event['name']}\n"
                 f"Дата: {event['date']}\n"
                 f"Время: {event['time']}\n"
-                f"Описание: {event['details']}"
+                f"Описание: {event['details']}\n"
+                f"Публичное: {public_status}"
             )
+            button_text = (
+                "Сделать приватным" if event.get("is_public") else "Сделать публичным"
+            )
+            keyboard = [[InlineKeyboardButton(
+                button_text, callback_data=f"public_{event_id}"
+            )]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            update.message.reply_text(text, reply_markup=reply_markup)
         else:
-            text = f"Событие с номером {event_id} не найдено."
-        update.message.reply_text(text)
+            update.message.reply_text(f"Событие с номером {event_id} не найдено.")
     except ValueError:
         update.message.reply_text("ID события должно быть числом. Используйте: /read_event <id>")
     except Exception as e:
         update.message.reply_text(f"При чтении события произошла ошибка: {e}")
+
 
 
 def event_edit_handler(update, context):
@@ -581,6 +652,88 @@ def my_meetings(update, context):
     update.message.reply_text(text)
 
 
+def share_event_handler(update, context):
+    user = update.effective_user
+    if not is_registered(user.id):
+        update.message.reply_text("Сначала зарегистрируйтесь: /register")
+        return
+
+    try:
+        if len(context.args) == 0:
+            update.message.reply_text("Используйте: /share_event <id>")
+            return
+        event_id = int(context.args[0])
+        new_status = calendar.toggle_public(user.id, event_id)
+        if new_status is None:
+            update.message.reply_text("Событие не найдено или не принадлежит вам.")
+        else:
+            status = "публичным" if new_status else "приватным"
+            update.message.reply_text(f"Событие №{event_id} стало {status}.")
+    except ValueError:
+        update.message.reply_text("ID события должно быть числом.")
+    except Exception as e:
+        update.message.reply_text(f"Ошибка: {e}")
+
+
+def public_callback_handler(update, context):
+    query = update.callback_query
+    query.answer()
+
+    data = query.data
+    action, event_id = data.split("_")
+    event_id = int(event_id)
+
+    if action == "public":
+        user = query.from_user
+        new_status = calendar.toggle_public(user.id, event_id)
+        if new_status is None:
+            query.edit_message_text("Событие не найдено или не принадлежит вам.")
+        else:
+            status = "публичным" if new_status else "приватным"
+            button_text = "Сделать приватным" if new_status else "Сделать публичным"
+            keyboard = [[InlineKeyboardButton(
+                button_text, callback_data=f"public_{event_id}"
+            )]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            old_text = query.message.text
+            public_str = "да" if new_status else "нет"
+            import re
+            new_text = re.sub(r"Публичное: .+", f"Публичное: {public_str}", old_text)
+            query.edit_message_text(new_text, reply_markup=reply_markup)
+
+
+def public_events_handler(update, context):
+    user = update.effective_user
+    if not is_registered(user.id):
+        update.message.reply_text("Сначала зарегистрируйтесь: /register")
+        return
+
+    try:
+        events = calendar.get_public_events(user.id)
+        if not events:
+            update.message.reply_text("Пока нет публичных событий от других пользователей.")
+            return
+
+        # Получаем имена авторов событий
+        lines = []
+        for ev in events:
+            try:
+                owner = TelegramUser.objects.get(telegram_id=ev["owner_id"])
+                owner_name = owner.username or owner.first_name or "Аноним"
+            except TelegramUser.DoesNotExist:
+                owner_name = "Аноним"
+            lines.append(
+                f"№{ev['id']} — {ev['name']}\n"
+                f"  Дата: {ev['date']}  Время: {ev['time']}\n"
+                f"  Автор: {owner_name}"
+            )
+
+        text = "🌍 Публичные события других пользователей:\n\n" + "\n\n".join(lines)
+        update.message.reply_text(text)
+    except Exception as e:
+        update.message.reply_text(f"Ошибка при получении публичных событий: {e}")
+
+
 def text_handler(update, context):
     if meeting_message_handler(update, context):
         return
@@ -602,12 +755,20 @@ def main():
     dispatcher.add_handler(CommandHandler('edit_event', event_edit_handler))
     dispatcher.add_handler(CommandHandler('delete_event', event_delete_handler))
     dispatcher.add_handler(CommandHandler('all_events', event_show_all_handler))
+    dispatcher.add_handler(CommandHandler('public_events', public_events_handler))
+
 
     dispatcher.add_handler(CommandHandler('invite_meeting', invite_meeting))
     dispatcher.add_handler(CommandHandler('my_meetings', my_meetings))
     dispatcher.add_handler(CallbackQueryHandler(meeting_callback_handler, pattern=r"^(confirm|decline)_"))
 
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
+
+    dispatcher.add_handler(CommandHandler('share_event', share_event_handler))
+    dispatcher.add_handler(CallbackQueryHandler(public_callback_handler, pattern=r"^public_"))
+    dispatcher.add_handler(CommandHandler('public_events', public_events_handler))
+
+
 
     print("Бот запущен и ждёт команд...")
     updater.start_polling()

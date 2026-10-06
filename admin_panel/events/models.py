@@ -8,6 +8,7 @@ class Event(models.Model):
     time = models.TimeField()
     details = models.TextField(blank=True, null=True)
     telegram_id = models.BigIntegerField()
+    is_public = models.BooleanField(default=False)
 
     class Meta:
         managed = False

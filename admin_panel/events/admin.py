@@ -17,8 +17,8 @@ class TelegramUserAdmin(admin.ModelAdmin):
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "date", "time", "telegram_id")
-    list_filter = ("date",)
+    list_display = ("id", "name", "date", "time", "telegram_id", "is_public")
+    list_filter = ("date", "is_public")
     search_fields = ("name", "telegram_id")
     ordering = ("-id",)
 
