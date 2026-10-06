@@ -212,6 +212,7 @@ def start_handler(update, context):
             f"/my_meetings — мои встречи\n"
             f"/share_event <id> — сделать событие публичным/приватным\n"
             f"/public_events — посмотреть публичные события других пользователей\n"
+            f"/export — выгрузить события в CSV или JSON\n"
 
         )
     else:
@@ -739,6 +740,26 @@ def text_handler(update, context):
         return
 
 
+def export_events_handler(update, context):
+    user = update.effective_user
+    if not is_registered(user.id):
+        update.message.reply_text("Сначала зарегистрируйтесь: /register")
+        return
+
+    base_url = "http://127.0.0.1:8000/events/export/"
+    csv_url = f"{base_url}?format=csv&telegram_id={user.id}"
+    json_url = f"{base_url}?format=json&telegram_id={user.id}"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("Скачать в CSV", url=csv_url),
+            InlineKeyboardButton("Скачать в JSON", url=json_url)
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text("Выберите формат выгрузки:", reply_markup=reply_markup)
+
+
 # --- Инициализация и регистрация ---
 
 def main():
@@ -767,6 +788,8 @@ def main():
     dispatcher.add_handler(CommandHandler('share_event', share_event_handler))
     dispatcher.add_handler(CallbackQueryHandler(public_callback_handler, pattern=r"^public_"))
     dispatcher.add_handler(CommandHandler('public_events', public_events_handler))
+
+    dispatcher.add_handler(CommandHandler('export', export_events_handler))
 
 
 
