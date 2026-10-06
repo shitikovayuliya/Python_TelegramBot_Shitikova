@@ -9,27 +9,32 @@ import psycopg2
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-# Локальные модули
-from secrets import API_TOKEN, DB_HOST, DB_NAME, DB_USER, DB_PASSWORD
+# Токен бота из переменных окружения
+API_TOKEN = os.getenv("API_TOKEN", "8603042436:AAHZIrnlqmdYgzKC-tsVzAKJ0gEBaQDjS0o")
 
-# --- Настройка Django ---
-sys.path.append(
-    "/Users/shitikova.yuliya/PycharmProjects/Python_TelegramBot_Shitikova/admin_panel"
-)
+# Корректно определяем путь к Django проекту
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'admin_panel'))
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin_panel.settings")
 
 import django
 django.setup()
 
-from events.models import BotStatistics, Meeting, TelegramUser, Event
+from events.models import BotStatistics, Meeting, TelegramUser
 
-# --- Подключение к БД ---
-conn = psycopg2.connect(
-    host=DB_HOST,
-    database=DB_NAME,
-    user=DB_USER,
-    password=DB_PASSWORD
-)
+# Подключение к БД через переменные окружения
+try:
+    conn = psycopg2.connect(
+        host=os.getenv('DB_HOST', 'db'),
+        database=os.getenv('DB_NAME', 'telegram_bot_db'),
+        user=os.getenv('DB_USER', 'bot_user'),
+        password=os.getenv('DB_PASSWORD', 'Gfhflbc1996')
+    )
+except Exception as e:
+    print(f"Ошибка подключения к БД: {e}")
+    sys.exit(1)
+
 
 
 class Calendar:
