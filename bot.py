@@ -53,118 +53,8 @@ class Calendar:
         return list(self.events.values())
 
 
-# --- Заглушки функций для заметок ---
-
-def create_note(note_text, note_name):
-    print(f"[DEBUG] Создана заметка: name={note_name}, text={note_text}")
-
-def read_note(note_name):
-    return "Текст заметки (заглушка)"
-
-def edit_note(note_name, note_text):
-    print(f"[DEBUG] Заметка {note_name} изменена: {note_text}")
-
-def delete_note(note_name):
-    print(f"[DEBUG] Заметка {note_name} удалена")
-
-def get_all_notes():
-    return ["Заметка 1", "Заметка 2", "Заметка 3"]
-
-def get_sorted_notes():
-    return sorted(get_all_notes())
-
-
-# --- Глобальный объект календаря ---
+# Глобальный объект календаря
 calendar = Calendar()
-
-
-# --- Обработчики заметок ---
-
-def create_note_handler(update, context):
-    try:
-        note_text = update.message.text
-        note_name = update.message.chat_id
-        create_note(note_text, note_name)
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text=f"Заметка {note_name} создана."
-        )
-    except Exception:
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text="Произошла ошибка."
-        )
-
-def read_note_handler(update, context):
-    try:
-        note_name = context.args[0] if context.args else str(update.message.chat_id)
-        note_text = read_note(note_name)
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text=f"Заметка {note_name}:\n{note_text}"
-        )
-    except Exception:
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text="Произошла ошибка."
-        )
-
-def edit_note_handler(update, context):
-    try:
-        note_name = context.args[0] if context.args else str(update.message.chat_id)
-        note_text = " ".join(context.args[1:]) if len(context.args) > 1 else ""
-        edit_note(note_name, note_text)
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text=f"Заметка {note_name} отредактирована."
-        )
-    except Exception:
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text="Произошла ошибка."
-        )
-
-def delete_note_handler(update, context):
-    try:
-        note_name = context.args[0] if context.args else str(update.message.chat_id)
-        delete_note(note_name)
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text=f"Заметка {note_name} удалена."
-        )
-    except Exception:
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text="Произошла ошибка."
-        )
-
-def show_all_notes_handler(update, context):
-    try:
-        notes = get_all_notes()
-        notes_text = "\n".join(notes) if notes else "Заметок нет."
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text=f"Все заметки:\n{notes_text}"
-        )
-    except Exception:
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text="Произошла ошибка."
-        )
-
-def show_sorted_notes_handler(update, context):
-    try:
-        notes = get_sorted_notes()
-        notes_text = "\n".join(notes) if notes else "Заметок нет."
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text=f"Заметки (отсортированы):\n{notes_text}"
-        )
-    except Exception:
-        context.bot.send_message(
-            chat_id=update.message.chat_id,
-            text="Произошла ошибка."
-        )
 
 
 # --- Обработчики календаря ---
@@ -264,15 +154,6 @@ def main():
     updater = Updater(token=API_TOKEN, use_context=True)
     dispatcher = updater.dispatcher
 
-    # Обработчики заметок
-    dispatcher.add_handler(CommandHandler('create', create_note_handler))
-    dispatcher.add_handler(CommandHandler('read', read_note_handler))
-    dispatcher.add_handler(CommandHandler('edit', edit_note_handler))
-    dispatcher.add_handler(CommandHandler('delete', delete_note_handler))
-    dispatcher.add_handler(CommandHandler('all', show_all_notes_handler))
-    dispatcher.add_handler(CommandHandler('sorted', show_sorted_notes_handler))
-
-    # Обработчики календаря
     dispatcher.add_handler(CommandHandler('create_event', event_create_handler))
     dispatcher.add_handler(CommandHandler('read_event', event_read_handler))
     dispatcher.add_handler(CommandHandler('edit_event', event_edit_handler))
