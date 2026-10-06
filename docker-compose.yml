@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: telegram_bot_db
+      POSTGRES_USER: bot_user
+      POSTGRES_PASSWORD: Gfhflbc1996
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=db
+      - DB_NAME=telegram_bot_db
+      - DB_USER=bot_user
+      - DB_PASSWORD=Gfhflbc1996
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+    command: sh -c "sleep 10 && cd admin_panel && python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    environment:
+      - API_TOKEN=8603042436:AAHZIrnlqmdYgzKC-tsVzAKJ0gEBaQDjS0o
+      - DB_HOST=db
+      - DB_NAME=telegram_bot_db
+      - DB_USER=bot_user
+      - DB_PASSWORD=Gfhflbc1996
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+    command: sh -c "sleep 10 && cd admin_panel && python manage.py migrate && cd /app && python bot.py"
+
+volumes:
+  db_data:

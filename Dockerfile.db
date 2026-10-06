@@ -1,0 +1,4 @@
+FROM postgres:14
+ENV POSTGRES_DB telegram_bot_db
+ENV POSTGRES_USER bot_user
+ENV POSTGRES_PASSWORD Gfhflbc1996
