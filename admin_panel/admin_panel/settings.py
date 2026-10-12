@@ -6,7 +6,8 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-9u*dehu!-nx)nwlmu8)r3)u^!xr^$a5g)9#ts8zpeu&-#8ss+w'
+SECRET_KEY = os.environ.get('SECRET_KEY')
+
 DEBUG = True
 ALLOWED_HOSTS = ['*']
 
@@ -54,9 +55,10 @@ WSGI_APPLICATION = 'admin_panel.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
+
         'NAME': os.environ.get('DB_NAME', 'telegram_bot_db'),
         'USER': os.environ.get('DB_USER', 'bot_user'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'Gfhflbc1996'),
+        'PASSWORD': os.environ['DB_PASSWORD'],
         'HOST': os.environ.get('DB_HOST', 'db'),
         'PORT': os.environ.get('DB_PORT', '5432'),
     }
@@ -76,4 +78,3 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-API_TOKEN = os.environ.get('API_TOKEN', '8603042436:AAHZIrnlqmdYgzKC-tsVzAKJ0gEBaQDjS0o')

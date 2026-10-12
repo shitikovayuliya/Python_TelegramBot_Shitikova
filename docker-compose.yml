@@ -1,14 +1,17 @@
 services:
   db:
     image: postgres:14
-    environment:
-      POSTGRES_DB: telegram_bot_db
-      POSTGRES_USER: bot_user
-      POSTGRES_PASSWORD: Gfhflbc1996
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   web:
     build:
@@ -16,32 +19,30 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    environment:
-      - DB_HOST=db
-      - DB_NAME=telegram_bot_db
-      - DB_USER=bot_user
-      - DB_PASSWORD=Gfhflbc1996
+    env_file:
+      - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - .:/app
-    command: sh -c "sleep 10 && cd admin_panel && python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    command: sh -c "cd admin_panel && python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
 
   bot:
     build:
       context: .
       dockerfile: Dockerfile.bot
-    environment:
-      - API_TOKEN=8603042436:AAHZIrnlqmdYgzKC-tsVzAKJ0gEBaQDjS0o
-      - DB_HOST=db
-      - DB_NAME=telegram_bot_db
-      - DB_USER=bot_user
-      - DB_PASSWORD=Gfhflbc1996
+    env_file:
+      - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - .:/app
-    command: sh -c "sleep 10 && cd admin_panel && python manage.py migrate && cd /app && python bot.py"
+    command: sh -c "cd /app && python bot.py"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
 volumes:
   db_data:

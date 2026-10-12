@@ -1,5 +1,9 @@
-secrets.py
 .idea/
-bot.py.backup
 __pycache__/
 *.pyc
+.env
+venv/
+myenv/
+*.log
+.DS_Store
+EOF
