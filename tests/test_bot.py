@@ -117,7 +117,6 @@ class TestTelegramAPIIntegration(TestCase):
     def test_bot_token_loaded(self):
         import os
         token = os.getenv("API_TOKEN") or os.getenv("BOT_TOKEN") or ""
-        # Токен может быть в bot-контейнере, а не в web — проверяем только формат
         if token:
             assert ":" in token
         else:
@@ -129,14 +128,12 @@ class TestAPIEndpoints(TestCase):
     def test_api_root_accessible(self):
         from django.test import Client
         client = Client()
-        # Проверяем что сервер отвечает — 404 тоже ок для корня
         response = client.get("/events/api/")
         assert response.status_code in [200, 404]
 
     def test_events_endpoint(self):
         from django.test import Client
         client = Client()
-        # Event model has managed=False — таблица может не существовать в тестовой БД
         try:
             response = client.get("/events/api/events/")
             assert response.status_code in [200, 401, 403, 500]

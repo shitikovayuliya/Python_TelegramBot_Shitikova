@@ -76,7 +76,6 @@ from telegram.request import HTTPXRequest
 from telegram.request import HTTPXRequest
 
 def main():
-    # Увеличиваем таймауты специально для Docker на macOS
     request = HTTPXRequest(
         connect_timeout=30.0,   # 30 секунд на установку соединения
         read_timeout=60.0,       # 60 секунд на получение ответа
@@ -86,11 +85,10 @@ def main():
     application = (
         Application.builder()
         .token(API_TOKEN)
-        .request(request)       # <-- наши таймауты
+        .request(request)
         .build()
     )
 
-    # --- Дальше всё как было (все add_handler) ---
     application.add_handler(CommandHandler('start', start_handler))
     application.add_handler(CommandHandler('register', register_handler))
     application.add_handler(CommandHandler('login', login_handler))
@@ -119,7 +117,6 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     print("Бот запущен и ждёт команд...")
-    # Для старых версий PTB параметр get_updates_timeout не нужен — хватит таймаутов в request
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

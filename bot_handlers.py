@@ -100,7 +100,6 @@ def login_handler(update, context):
 
 def calendar_handler(update, context, calendar):
     user = update.effective_user
-    from bot_utils import require_registration
 
     if not TelegramUser.objects.filter(telegram_id=user.id).exists():
         update.message.reply_text("Сначала зарегистрируйтесь: /register")
