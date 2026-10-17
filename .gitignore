@@ -25,7 +25,11 @@ htmlcov/
 .idea/
 .vscode/
 *.swp
-*.swo
+*.swo/
+
+# GigaCode / GigaIDE
+gigacode/
+gigaide/
 
 # Docker
 # .env файлы уже добавлены выше
