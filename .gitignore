@@ -30,6 +30,7 @@ htmlcov/
 # GigaCode / GigaIDE
 gigacode/
 gigaide/
+.gigaide/
 
 # Docker
 # .env файлы уже добавлены выше
