@@ -1,9 +1,40 @@
-.idea/
-__pycache__/
-*.pyc
+# Конфиденциальные файлы
 .env
+.env.*
+
+# Виртуальные окружения
 venv/
 myenv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Тесты
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+# .env файлы уже добавлены выше
+
+# Логи
 *.log
+
+# macOS
 .DS_Store
+
+# Временные файлы
 EOF

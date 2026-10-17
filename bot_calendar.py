@@ -1,14 +1,23 @@
+"""
+Класс для работы с событиями через прямые SQL-запросы.
+Используется для CRUD-операций с событиями.
+"""
 import psycopg2
 
 
 class Calendar:
     """Класс для работы с событиями через прямые SQL-запросы."""
 
-    def __init__(self, conn):
+    def __init__(self, conn, db_host, db_name, db_user, db_password):
+        """Инициализация подключения к БД."""
         self.conn = conn
+        self.db_host = db_host
+        self.db_name = db_name
+        self.db_user = db_user
+        self.db_password = db_password
 
     def _execute(self, query, params=None, fetch=False):
-        """Обёртка для выполнения SQL с авто-закрытием курсора."""
+        """Выполнение SQL-запроса с авто-закрытием курсора."""
         with self.conn.cursor() as cursor:
             cursor.execute(query, params or ())
             if fetch == "one":
@@ -19,15 +28,17 @@ class Calendar:
             return cursor.rowcount
 
     def create_event(self, telegram_id, event_name, event_date, event_time, event_details):
+        """Создание нового события."""
         row = self._execute(
-            "INSERT INTO events (telegram_id, name, date, time, details) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+            "INSERT INTO events (telegram_id, name, date, time, details, is_public) "
+            "VALUES (%s, %s, %s, %s, %s, FALSE) RETURNING id;",
             (telegram_id, event_name, event_date, event_time, event_details),
             fetch="one"
         )
         return row[0] if row else None
 
     def read_event(self, telegram_id, event_id):
+        """Получение события по ID."""
         row = self._execute(
             "SELECT id, name, date, time, details, is_public FROM events "
             "WHERE id = %s AND telegram_id = %s;",
@@ -43,6 +54,7 @@ class Calendar:
 
     def edit_event(self, telegram_id, event_id, event_name=None, event_date=None,
                    event_time=None, event_details=None):
+        """Редактирование события."""
         updates, values = [], []
         for field, value in [("name", event_name), ("date", event_date),
                              ("time", event_time), ("details", event_details)]:
@@ -62,13 +74,29 @@ class Calendar:
         return rowcount > 0
 
     def delete_event(self, telegram_id, event_id):
+        """Удаление события."""
         rowcount = self._execute(
             "DELETE FROM events WHERE id = %s AND telegram_id = %s;",
             (event_id, telegram_id)
         )
         return rowcount > 0
 
+    def reset_id_sequence(self):
+        """Сброс последовательности ID при удалении всех событий."""
+        conn = psycopg2.connect(
+            host=self.db_host,
+            database=self.db_name,
+            user=self.db_user,
+            password=self.db_password
+        )
+        cursor = conn.cursor()
+        cursor.execute("ALTER SEQUENCE events_id_seq RESTART WITH 1;")
+        conn.commit()
+        cursor.close()
+        conn.close()
+
     def get_all_events(self, telegram_id):
+        """Получение всех событий пользователя."""
         rows = self._execute(
             "SELECT id, name, date, time FROM events "
             "WHERE telegram_id = %s ORDER BY date, time;",
@@ -81,6 +109,7 @@ class Calendar:
         ]
 
     def toggle_public(self, telegram_id, event_id):
+        """Переключение публичности события."""
         row = self._execute(
             "SELECT is_public FROM events WHERE id = %s AND telegram_id = %s;",
             (event_id, telegram_id),
@@ -96,6 +125,7 @@ class Calendar:
         return new_status
 
     def get_public_events(self, telegram_id, limit=20):
+        """Получение публичных событий других пользователей."""
         rows = self._execute(
             "SELECT id, name, date, time, telegram_id FROM events "
             "WHERE is_public = TRUE AND telegram_id != %s "

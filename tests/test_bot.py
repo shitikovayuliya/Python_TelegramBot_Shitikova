@@ -116,11 +116,11 @@ class TestTelegramAPIIntegration(TestCase):
 
     def test_bot_token_loaded(self):
         import os
-        token = os.getenv("API_TOKEN") or os.getenv("BOT_TOKEN") or ""
-        if token:
+        token = os.getenv("TELEGRAM_BOT_TOKEN") or ""
+        if token and token != "your_bot_token_here":
             assert ":" in token
         else:
-            pytest.skip("Токен бота не передан в web-контейнер")
+            pytest.skip("Токен бота не передан или использует значение по умолчанию")
 
 
 class TestAPIEndpoints(TestCase):
@@ -134,11 +134,8 @@ class TestAPIEndpoints(TestCase):
     def test_events_endpoint(self):
         from django.test import Client
         client = Client()
-        try:
-            response = client.get("/events/api/events/")
-            assert response.status_code in [200, 401, 403, 500]
-        except Exception:
-            pytest.skip("Таблица events не существует в тестовой БД (managed=False)")
+        response = client.get("/events/api/events/")
+        assert response.status_code == 200
 
     def test_users_endpoint(self):
         from django.test import Client

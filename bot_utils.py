@@ -1,5 +1,9 @@
+"""
+Вспомогательные функции для бота: декораторы, форматирование, парсинг.
+"""
 import re
 import functools
+from django.db import connection
 from events.models import TelegramUser
 
 
@@ -23,8 +27,10 @@ def handle_errors(handler):
             return handler(update, context)
         except ValueError:
             update.message.reply_text("ID события должно быть числом.")
+            connection.close()
         except Exception as e:
             update.message.reply_text(f"Произошла ошибка: {e}")
+            connection.close()
     return wrapper
 
 

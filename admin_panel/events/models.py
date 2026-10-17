@@ -11,7 +11,7 @@ class Event(models.Model):
     is_public = models.BooleanField(default=False)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'events'
 
     def __str__(self):
